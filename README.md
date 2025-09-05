@@ -61,14 +61,14 @@ sudo systemctl status nginx
 */3 * * * * curl -s http://localhost/admin > /dev/null 2>&1
 */7 * * * * curl -s http://localhost/login.jsp > /dev/null 2>&1
 
-# 405 Method Not Allowed: 매 3분 (설정한 엔드포인트)
+# 405 에러코드
 */3 * * * * /usr/bin/curl -s -X POST http://127.0.0.1/onlyget -o /dev/null
 */6 * * * * curl -X DELETE http://localhost/ > /dev/null 2>&1
 
-# 414 URI Too Long: 매 5분 (아주 긴 URL)
+# 414 에러코드
 */5 * * * * /usr/bin/curl -s "http://127.0.0.1/$(/usr/bin/head -c 12000 /dev/zero | /usr/bin/tr '\0' 'a')" -o /dev/null
 
-# 502 에러코드(서버 에러 생성)
+# 502 에러코드
 */2 * * * * curl -s http://localhost/test.php > /dev/null 2>&1
 */4 * * * * curl -s http://localhost/secret.php > /dev/null 2>&1
 ```
@@ -79,206 +79,172 @@ cd ~
 nano log_analyzer.sh
 ```
 #### 2. 스크립트 내용 작성
+##### 1. 서버 상태 요약 기능
+
+###### 기본 통계 분석
+
 ```bash
-#!/bin/bash
-
-LOG_FILE="/var/log/nginx/access.log"
-ERROR_LOG="/var/log/nginx/error.log"
-
-clear
-echo "======================================"
-echo "    Nginx 웹서버 로그 분석 도구"
-echo "======================================"
-echo "1. 서버 상태 요약"
-echo "2. 보안 위협 분석"
-echo "3. 성능 분석"
-echo "4. 에러 분석"
-echo "5. 트래픽 패턴 분석"
-echo "6. 실시간 모니터링"
-echo "7. 시간대별 상세 분석"
-echo "0. 종료"
-echo "======================================"
-read -p "선택하세요 (0-7): " choice
-
-while true; do
-    case $choice in
-        1)
-            echo "=== 서버 상태 요약 ==="
-            echo "분석 시간: $(date)"
-            echo "로그 파일: $LOG_FILE"
-            
-            sudo awk 'BEGIN {
-                total=0; success=0; client_error=0; server_error=0;
-            }
-            {
-                total++
-                if ($9 >= 200 && $9 < 300) success++
-                else if ($9 >= 400 && $9 < 500) client_error++
-                else if ($9 >= 500) server_error++
-            }
-            END {
-                printf "총 요청 수: %d\n", total
-                printf "성공 요청: %d (%.1f%%)\n", success, (success/total)*100
-                printf "클라이언트 에러: %d (%.1f%%)\n", client_error, (client_error/total)*100
-                printf "서버 에러: %d (%.1f%%)\n", server_error, (server_error/total)*100
-                printf "전체 에러율: %.1f%%\n", ((client_error+server_error)/total)*100
-            }' $LOG_FILE
-            ;;
-            
-        2)
-            echo "=== 보안 위협 분석 ==="
-            echo "의심스러운 활동 탐지:"
-            
-            # 404 에러가 많은 IP (스캐닝 의심)
-            echo -e "\n[404 에러 다발 IP - 스캐닝 의심]"
-            sudo awk '$9 == 404 {ip[$1]++} END {for(i in ip) if(ip[i] >= 3) print i, ip[i] "회"}' $LOG_FILE | sort -k2 -nr
-            
-            # 다양한 경로 시도 (해킹 시도 의심)
-            echo -e "\n[다양한 경로 시도 IP]"
-            sudo awk '{ip_path[$1][$7]++; ip_count[$1]++} END {for(ip in ip_count) if(ip_count[ip] >= 5) {paths=0; for(path in ip_path[ip]) paths++; if(paths >= 3) print ip, ip_count[ip] "회", paths "개 경로"}}' $LOG_FILE
-            
-            # SQL Injection 시도 의심
-            echo -e "\n[SQL Injection 시도 의심]"
-            sudo grep -i "union\|select\|drop\|insert" $LOG_FILE | awk '{print $1, $7}' | head -5
-            ;;
-            
-        3)
-            echo "=== 성능 분석 ==="
-            
-            # 가장 많이 요청된 페이지
-            echo "[가장 많이 요청된 페이지 Top 10]"
-            sudo awk '{url[$7]++} END {for(u in url) print url[u], u}' $LOG_FILE | sort -nr | head -10
-            
-            # 큰 응답 크기 요청
-            echo -e "\n[대용량 응답 요청 (1KB 이상)]"
-            sudo awk '$10 > 1000 {print $1, $7, $10 "bytes"}' $LOG_FILE | head -10
-            
-            # 느린 요청 가능성 (502, 504 에러)
-            echo -e "\n[성능 관련 에러]"
-            sudo awk '$9 == 502 || $9 == 504 {print $4, $1, $7, $9}' $LOG_FILE
-            ;;
-            
-        4)
-            echo "=== 에러 분석 ==="
-            
-            # 에러 유형별 통계
-            echo "[에러 상태 코드별 통계]"
-            sudo awk '$9 >= 400 {status[$9]++} END {for(s in status) print s":", status[s]}' $LOG_FILE | sort
-            
-            # 가장 많은 에러를 발생시키는 IP
-            echo -e "\n[에러 발생 IP Top 5]"
-            sudo awk '$9 >= 400 {ip[$1]++} END {for(i in ip) print ip[i], i}' $LOG_FILE | sort -nr | head -5
-            
-            # 가장 많은 에러가 발생하는 URL
-            echo -e "\n[에러 발생 URL Top 5]"
-            sudo awk '$9 >= 400 {url[$7]++} END {for(u in url) print url[u], u}' $LOG_FILE | sort -nr | head -5
-            
-            # 시스템 에러 로그
-            echo -e "\n[최근 시스템 에러 (error.log)]"
-            sudo tail -5 $ERROR_LOG 2>/dev/null || echo "에러 로그 없음"
-            ;;
-            
-        5)
-            echo "=== 트래픽 패턴 분석 ==="
-            
-            # 시간대별 요청 수
-            echo "[시간대별 요청 분포]"
-            sudo awk '{
-                split($4, datetime, ":")
-                hour = datetime[2]
-                count[hour]++
-            } 
-            END {
-                for(h=0; h<24; h++) {
-                    printf "%02d시: ", h
-                    requests = count[sprintf("%02d", h)]
-                    if(requests == "") requests = 0
-                    printf "%d회\n", requests
-                }
-            }' $LOG_FILE
-            
-            # 요일별 분석 (최근 데이터만)
-            echo -e "\n[User Agent 분석]"
-            sudo awk -F'"' '{ua[$6]++} END {for(u in ua) print ua[u], u}' $LOG_FILE | sort -nr | head -5
-            ;;
-            
-        6)
-            echo "=== 실시간 모니터링 시작 ==="
-            echo "Ctrl+C로 중단하세요"
-            echo "시간     IP주소        상태  URL"
-            echo "----------------------------------------"
-            sudo tail -f $LOG_FILE | awk '{
-                split($4, time, ":")
-                printf "%s:%s ", time[2], time[3]
-                printf "%-15s %s   %s\n", $1, $9, $7
-                fflush()
-            }'
-            ;;
-            
-        7)
-            echo "=== 시간대별 상세 분석 ==="
-            read -p "분석할 시간 입력 (예: 14 = 14시): " target_hour
-            
-            echo "[$target_hour 시 상세 분석]"
-            sudo awk -v hour="$target_hour" '
-            BEGIN {
-                split("", hour_data)
-                total=0; errors=0;
-            }
-            {
-                split($4, datetime, ":")
-                if(datetime[2] == sprintf("%02d", hour)) {
-                    total++
-                    ip[$1]++
-                    status[$9]++
-                    url[$7]++
-                    if($9 >= 400) errors++
-                }
-            }
-            END {
-                if(total > 0) {
-                    printf "총 요청: %d회, 에러: %d회 (%.1f%%)\n", total, errors, (errors/total)*100
-                    print "\n[상위 IP]"
-                    for(i in ip) print ip[i], i | "sort -nr | head -3"
-                    print "\n[상위 URL]"  
-                    for(u in url) print url[u], u | "sort -nr | head -3"
-                    print "\n[상태 코드]"
-                    for(s in status) print s":", status[s]
-                } else {
-                    print "해당 시간대 데이터 없음"
-                }
-            }' $LOG_FILE
-            ;;
-            
-        0)
-            echo "분석 도구를 종료합니다."
-            exit 0
-            ;;
-            
-        *)
-            echo "잘못된 선택입니다."
-            ;;
-    esac
-
-    echo -e "\n계속하려면 Enter를 누르세요..."
-    read
-    
-    clear
-    echo "======================================"
-    echo "    Nginx 웹서버 로그 분석 도구"
-    echo "======================================"
-    echo "1. 서버 상태 요약"
-    echo "2. 보안 위협 분석"
-    echo "3. 성능 분석"
-    echo "4. 에러 분석"
-    echo "5. 트래픽 패턴 분석"
-    echo "6. 실시간 모니터링"
-    echo "7. 시간대별 상세 분석"
-    echo "0. 종료"
-    echo "======================================"
-    read -p "선택하세요 (0-7): " choice
-done
+sudo awk 'BEGIN {
+    total=0; success=0; client_error=0; server_error=0;
+}
+{
+    total++
+    if ($9 >= 200 && $9 < 300) success++
+    else if ($9 >= 400 && $9 < 500) client_error++
+    else if ($9 >= 500) server_error++
+}
+END {
+    printf "총 요청 수: %d\n", total
+    printf "성공 요청: %d (%.1f%%)\n", success, (success/total)*100
+    printf "클라이언트 에러: %d (%.1f%%)\n", client_error, (client_error/total)*100
+    printf "서버 에러: %d (%.1f%%)\n", server_error, (server_error/total)*100
+}' /var/log/nginx/access.log
 ```
+
+- `BEGIN { }`: 스크립트 시작 전 변수 초기화
+- `$9`: Nginx 로그의 9번째 필드(HTTP 상태 코드)
+- `END { }`: 모든 라인 처리 후 결과 출력
+- `printf`: 소수점 포맷팅 출력
+
+##### 2. 보안 위협 분석 기능
+
+###### 404 에러 다발 IP 탐지 (포트 스캐닝 의심)
+
+```bash
+sudo awk '$9 == 404 {ip[$1]++} END {
+    for(i in ip) 
+        if(ip[i] >= 3) 
+            print i, ip[i] "회"
+}' /var/log/nginx/access.log | sort -k2 -nr
+```
+
+- `$9 == 404`: 404 상태 코드만 필터링
+- `if(ip[i] >= 3)`: 임계값 설정으로 의심 활동 탐지
+
+##### 3. 성능 분석 기능
+
+###### 인기 페이지 분석
+
+```bash
+sudo awk '{url[$7]++} END {
+    for(u in url) print url[u], u
+}' /var/log/nginx/access.log | sort -nr | head -10
+```
+
+- `$7`: 요청 URL 필드
+- `sort -nr`: 숫자 역순 정렬
+- `head -10`: 상위 10개만 출력
+
+###### 대용량 응답 탐지
+
+```bash
+sudo awk '$10 > 1000 {
+    print $1, $7, $10 "bytes"
+}' /var/log/nginx/access.log | head -10
+```
+
+- `$10`: 응답 크기 필드
+- 조건부 출력: 특정 임계값 초과 데이터만 표시
+
+##### 4. 에러 분석 기능
+
+###### 에러 상태 코드별 통계
+
+```bash
+sudo awk '$9 >= 400 {status[$9]++} END {
+    for(s in status) print s":", status[s]
+}' /var/log/nginx/access.log | sort
+```
+
+###### 에러 발생 IP 분석
+
+```bash
+sudo awk '$9 >= 400 {ip[$1]++} END {
+    for(i in ip) print ip[i], i
+}' /var/log/nginx/access.log | sort -nr | head -5
+```
+
+- `$9 >= 400`: 클라이언트/서버 에러만 필터링
+
+##### 5. 트래픽 패턴 분석 기능
+
+###### 시간대별 요청 분포
+
+```bash
+sudo awk '{
+    split($4, datetime, ":")
+    hour = datetime[2]
+    count[hour]++
+} 
+END {
+    for(h=0; h<24; h++) {
+        printf "%02d시: ", h
+        requests = count[sprintf("%02d", h)]
+        if(requests == "") requests = 0
+        printf "%d회\n", requests
+    }
+}' /var/log/nginx/access.log
+```
+
+- `split($4, datetime, ":")`: 날짜/시간 필드 분할
+- `sprintf("%02d", h)`: 시간 포맷팅 (01, 02, ...)
+- 배열 초기화 검증: 빈 값 처리
+
+###### User-Agent 분석
+
+```bash
+sudo awk -F'"' '{ua[$6]++} END {
+    for(u in ua) print ua[u], u
+}' /var/log/nginx/access.log | sort -nr | head -5
+```
+
+- `F'"'`: 따옴표를 필드 구분자로 설정
+- `$6`: User-Agent 필드 (따옴표 기준)
+
+##### 6. 실시간 모니터링 기능
+
+```bash
+sudo tail -f /var/log/nginx/access.log | awk '{
+    split($4, time, ":")
+    printf "%s:%s ", time[2], time[3]
+    printf "%-15s %s   %s\n", $1, $9, $7
+    fflush()
+}'
+```
+
+- `tail -f`: 실시간 로그 추적
+- `fflush()`: 즉시 출력 (버퍼링 방지)
+- `%-15s`: 왼쪽 정렬 포맷팅
+
+##### 7. 시간대별 상세 분석 기능
+
+```bash
+sudo awk -v hour="$target_hour" '
+BEGIN {
+    total=0; errors=0;
+}
+{
+    split($4, datetime, ":")
+    if(datetime[2] == sprintf("%02d", hour)) {
+        total++
+        ip[$1]++
+        status[$9]++
+        url[$7]++
+        if($9 >= 400) errors++
+    }
+}
+END {
+    if(total > 0) {
+        printf "총 요청: %d회, 에러: %d회 (%.1f%%)\n", total, errors, (errors/total)*100
+        for(i in ip) print ip[i], i | "sort -nr | head -3"
+    }
+}' /var/log/nginx/access.log
+```
+
+- `v hour="$target_hour"`: 외부 변수 전달
+- 조건부 집계: 특정 시간대만 필터링
+- 파이프 활용: `| "sort -nr | head -3"`
+
 #### 3. 권한 설정
 ```bash
 chmod +x log_analyzer.sh
