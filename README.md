@@ -301,4 +301,10 @@ chmod +x log_analyzer.sh
 #### 7. 시간대별 상세 분석
 <img width="556" height="931" alt="10(시간대별 상세 분석)" src="https://github.com/user-attachments/assets/5bae9051-8357-4ab2-b6d0-2c56492f23b6" />
 
+---
+
+### 5) 발전 방향
+- 실제 운영 서비스의 로그를 분석합니다.
+- 분석한 로그 데이터를 시각화합니다.
+
 
